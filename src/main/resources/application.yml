@@ -2,6 +2,27 @@ spring:
   application:
     name: api-ptf
 
+  datasource:
+    url: jdbc:postgresql://localhost:5433/ptf
+    username: ptf
+    password: ptf
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: ptf-pool
+      maximum-pool-size: 10
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
 server:
   port: 8081
 
@@ -10,3 +31,6 @@ management:
     web:
       exposure:
         include: health,info
+  endpoint:
+    health:
+      show-details: always
