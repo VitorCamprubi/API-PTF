@@ -18,6 +18,15 @@ import java.util.UUID;
 @Table(name = "accounts")
 public class Account {
 
+    /**
+     * Escala monetaria do projeto. Espelha o NUMERIC(19, 4) do banco.
+     *
+     * Todo BigDecimal de dinheiro criado em memoria e normalizado nesta escala,
+     * para que o valor serializado no JSON nao dependa da origem do objeto:
+     * saldo recem-criado e saldo lido do banco saem os dois como 0.0000.
+     */
+    public static final int MONETARY_SCALE = 4;
+
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     @Column(name = "id", nullable = false, updatable = false)
@@ -48,7 +57,7 @@ public class Account {
     public Account(String document, String holderName) {
         this.document = document;
         this.holderName = holderName;
-        this.balance = BigDecimal.ZERO;
+        this.balance = BigDecimal.ZERO.setScale(MONETARY_SCALE);
     }
 
     @PrePersist
