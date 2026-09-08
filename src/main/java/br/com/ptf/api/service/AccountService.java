@@ -4,6 +4,7 @@ import br.com.ptf.api.domain.Account;
 import br.com.ptf.api.dto.CreateAccountRequest;
 import br.com.ptf.api.exception.AccountNotFoundException;
 import br.com.ptf.api.exception.DuplicateDocumentException;
+import br.com.ptf.api.repository.AccountBalanceProjection;
 import br.com.ptf.api.repository.AccountRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,6 +32,19 @@ public class AccountService {
     @Transactional(readOnly = true)
     public Account findById(UUID id) {
         return accountRepository.findById(id)
+                .orElseThrow(() -> new AccountNotFoundException(id));
+    }
+
+    /**
+     * Consulta de saldo.
+     *
+     * Conta inexistente e regra de negocio, nao Optional vazio devolvido ao
+     * controller: a excecao de dominio sobe e o GlobalExceptionHandler decide o
+     * status HTTP. O service continua sem saber que existe HTTP.
+     */
+    @Transactional(readOnly = true)
+    public AccountBalanceProjection findBalanceById(UUID id) {
+        return accountRepository.findBalanceById(id)
                 .orElseThrow(() -> new AccountNotFoundException(id));
     }
 }

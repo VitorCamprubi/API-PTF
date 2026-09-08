@@ -2,9 +2,11 @@ package br.com.ptf.api.controller;
 
 import br.com.ptf.api.domain.Account;
 import br.com.ptf.api.dto.AccountResponse;
+import br.com.ptf.api.dto.BalanceResponse;
 import br.com.ptf.api.dto.CreateAccountRequest;
 import br.com.ptf.api.service.AccountService;
 import jakarta.validation.Valid;
+import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -42,5 +44,20 @@ public class AccountController {
     @GetMapping("/{id}")
     public AccountResponse findById(@PathVariable UUID id) {
         return AccountResponse.from(accountService.findById(id));
+    }
+
+    /**
+     * Saldo como sub-recurso da conta.
+     *
+     * Cache-Control: no-store porque saldo e dado volatil e financeiro. Sem isso,
+     * proxy ou browser pode guardar e devolver um valor velho como se fosse atual.
+     */
+    @GetMapping("/{id}/balance")
+    public ResponseEntity<BalanceResponse> findBalance(@PathVariable UUID id) {
+        BalanceResponse body = BalanceResponse.from(accountService.findBalanceById(id));
+
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(body);
     }
 }
