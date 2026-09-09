@@ -11,6 +11,7 @@ import jakarta.persistence.Table;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -60,16 +61,57 @@ public class Account {
         this.balance = BigDecimal.ZERO.setScale(MONETARY_SCALE);
     }
 
+    /**
+     * Timestamps sempre em UTC.
+     *
+     * A coluna e TIMESTAMPTZ: o Postgres guarda o instante e descarta o fuso de
+     * origem. Gravar com o fuso local fazia o mesmo instante aparecer como
+     * -03:00 no objeto em memoria e como Z depois de ler do banco. A API fala
+     * UTC; converter para o fuso do usuario e problema de quem exibe.
+     */
     @PrePersist
     void onCreate() {
-        OffsetDateTime now = OffsetDateTime.now();
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         this.createdAt = now;
         this.updatedAt = now;
     }
 
     @PreUpdate
     void onUpdate() {
-        this.updatedAt = OffsetDateTime.now();
+        this.updatedAt = OffsetDateTime.now(ZoneOffset.UTC);
+    }
+
+    /**
+     * Credita um valor no saldo.
+     *
+     * O saldo so muda por aqui e pelo debit. Nao existe setBalance: alterar
+     * saldo exige passar por uma operacao de dominio, com nome e com regra.
+     */
+    public void credit(BigDecimal amount) {
+        requirePositive(amount);
+        this.balance = this.balance.add(amount).setScale(MONETARY_SCALE);
+    }
+
+    /**
+     * Debita um valor do saldo.
+     *
+     * Ainda nao ha verificacao de saldo suficiente. Hoje quem impede saldo
+     * negativo e a constraint chk_accounts_balance_non_negative, que derruba a
+     * transacao inteira no commit. A regra explicita, com lock, entra na etapa 13.
+     */
+    public void debit(BigDecimal amount) {
+        requirePositive(amount);
+        this.balance = this.balance.subtract(amount).setScale(MONETARY_SCALE);
+    }
+
+    /**
+     * Guarda contra erro de programacao, nao contra entrada do usuario. O valor
+     * ja chega validado pelo DTO; se chegar invalido aqui, e bug nosso.
+     */
+    private static void requirePositive(BigDecimal amount) {
+        if (amount == null || amount.signum() <= 0) {
+            throw new IllegalArgumentException("valor da operacao deve ser positivo");
+        }
     }
 
     public UUID getId() {
