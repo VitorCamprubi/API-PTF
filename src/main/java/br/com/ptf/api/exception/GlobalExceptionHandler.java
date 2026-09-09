@@ -20,9 +20,13 @@ public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
-    @ExceptionHandler(AccountNotFoundException.class)
-    public ResponseEntity<ApiError> handleAccountNotFound(AccountNotFoundException ex,
-                                                          HttpServletRequest request) {
+    /**
+     * Um handler para toda a familia NotFoundException. Entidade nova nao exige
+     * handler novo: basta a excecao dela estender NotFoundException.
+     */
+    @ExceptionHandler(NotFoundException.class)
+    public ResponseEntity<ApiError> handleNotFound(NotFoundException ex,
+                                                   HttpServletRequest request) {
         return build(HttpStatus.NOT_FOUND, ex.getMessage(), request);
     }
 
