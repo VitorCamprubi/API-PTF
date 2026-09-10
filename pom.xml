@@ -59,6 +59,18 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!--
+            Testcontainers: sobe um Postgres real em container durante os testes.
+            A versao vem gerenciada pelo parent do Spring Boot, por isso nao aparece
+            aqui. Nao precisamos do artefato junit-jupiter do Testcontainers porque
+            o ciclo de vida do container e controlado a mao em IntegrationTestSupport.
+        -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
