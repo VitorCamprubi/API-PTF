@@ -30,9 +30,13 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.NOT_FOUND, ex.getMessage(), request);
     }
 
-    @ExceptionHandler(DuplicateDocumentException.class)
-    public ResponseEntity<ApiError> handleDuplicateDocument(DuplicateDocumentException ex,
-                                                            HttpServletRequest request) {
+    /**
+     * Mesma logica para os conflitos: documento duplicado, chave de idempotencia
+     * reutilizada com payload diferente, e o que vier depois.
+     */
+    @ExceptionHandler(ConflictException.class)
+    public ResponseEntity<ApiError> handleConflict(ConflictException ex,
+                                                   HttpServletRequest request) {
         return build(HttpStatus.CONFLICT, ex.getMessage(), request);
     }
 
@@ -79,8 +83,9 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * Rede de seguranca do banco: constraint violada que passou pela validacao em memoria.
-     * E o caso da corrida entre duas requisicoes com o mesmo documento.
+     * Rede de seguranca do banco: constraint violada que passou pela validacao em
+     * memoria. E o caso da corrida entre duas requisicoes com o mesmo documento,
+     * e tambem o do saldo negativo barrado pelo CHECK.
      */
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ApiError> handleDataIntegrity(DataIntegrityViolationException ex,
