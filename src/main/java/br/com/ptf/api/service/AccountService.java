@@ -1,11 +1,12 @@
 package br.com.ptf.api.service;
 
 import br.com.ptf.api.domain.Account;
+import br.com.ptf.api.domain.AuditAction;
 import br.com.ptf.api.dto.CreateAccountRequest;
 import br.com.ptf.api.exception.AccountNotFoundException;
 import br.com.ptf.api.exception.DuplicateDocumentException;
-import br.com.ptf.api.repository.AccountBalanceProjection;
 import br.com.ptf.api.repository.AccountRepository;
+import br.com.ptf.api.repository.AccountBalanceProjection;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -15,9 +16,11 @@ import java.util.UUID;
 public class AccountService {
 
     private final AccountRepository accountRepository;
+    private final AuditService auditService;
 
-    public AccountService(AccountRepository accountRepository) {
+    public AccountService(AccountRepository accountRepository, AuditService auditService) {
         this.accountRepository = accountRepository;
+        this.auditService = auditService;
     }
 
     @Transactional
@@ -26,7 +29,11 @@ public class AccountService {
             throw new DuplicateDocumentException(request.document());
         }
         Account account = new Account(request.document(), request.holderName());
-        return accountRepository.save(account);
+        Account salva = accountRepository.save(account);
+
+        auditService.record(AuditAction.ACCOUNT_CREATED, "Account", salva.getId().toString(), null);
+
+        return salva;
     }
 
     @Transactional(readOnly = true)

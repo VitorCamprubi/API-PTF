@@ -1,6 +1,7 @@
 package br.com.ptf.api.service;
 
 import br.com.ptf.api.domain.Account;
+import br.com.ptf.api.domain.AuditAction;
 import br.com.ptf.api.domain.IdempotencyRecord;
 import br.com.ptf.api.domain.Transaction;
 import br.com.ptf.api.dto.CreateTransactionRequest;
@@ -38,15 +39,18 @@ public class TransactionService {
     private final AccountRepository accountRepository;
     private final IdempotencyRecordRepository idempotencyRecordRepository;
     private final AdvisoryLockRepository advisoryLockRepository;
+    private final AuditService auditService;
 
     public TransactionService(TransactionRepository transactionRepository,
                               AccountRepository accountRepository,
                               IdempotencyRecordRepository idempotencyRecordRepository,
-                              AdvisoryLockRepository advisoryLockRepository) {
+                              AdvisoryLockRepository advisoryLockRepository,
+                              AuditService auditService) {
         this.transactionRepository = transactionRepository;
         this.accountRepository = accountRepository;
         this.idempotencyRecordRepository = idempotencyRecordRepository;
         this.advisoryLockRepository = advisoryLockRepository;
+        this.auditService = auditService;
     }
 
     /**
@@ -82,11 +86,27 @@ public class TransactionService {
         Optional<IdempotencyRecord> registro = idempotencyRecordRepository.findById(chave);
         if (registro.isPresent()) {
             if (!registro.get().getRequestHash().equals(hash)) {
+                // Em transacao propria: daqui a duas linhas esta transacao vai dar
+                // rollback, e o registro de que alguem reutilizou uma chave com
+                // outro payload e justamente o que nao pode se perder.
+                auditService.recordInNewTransaction(
+                        AuditAction.IDEMPOTENCY_CONFLICT,
+                        "IdempotencyKey",
+                        chave,
+                        "payload diferente do registrado para esta chave");
+
                 throw new IdempotencyConflictException(chave);
             }
             UUID idOriginal = registro.get().getTransactionId();
             Transaction original = transactionRepository.findByIdWithAccount(idOriginal)
                     .orElseThrow(() -> new TransactionNotFoundException(idOriginal));
+
+            auditService.record(
+                    AuditAction.TRANSACTION_REPLAYED,
+                    "Transaction",
+                    idOriginal.toString(),
+                    "chave " + chave);
+
             return new Result(original, true);
         }
 
@@ -118,7 +138,18 @@ public class TransactionService {
 
         transaction.apply();
 
-        return transactionRepository.save(transaction);
+        Transaction salva = transactionRepository.save(transaction);
+
+        // Na mesma transacao do lancamento. Se o saldo nao puder ser gravado, o
+        // rollback leva a auditoria junto: nao existe "registrei que aconteceu"
+        // sem ter acontecido.
+        auditService.record(
+                AuditAction.TRANSACTION_CREATED,
+                "Transaction",
+                salva.getId().toString(),
+                "%s %s".formatted(salva.getType(), salva.getAmount()));
+
+        return salva;
     }
 
     /**

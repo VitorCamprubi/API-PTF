@@ -66,8 +66,10 @@ public abstract class IntegrationTestSupport {
      *
      * TRUNCATE em vez de deleteAll(): nao carrega entidade nenhuma para memoria e
      * nao dispara callback de JPA. O CASCADE limpa tambem qualquer tabela que
-     * referencie estas por chave estrangeira, entao esta linha continua correta
-     * quando o esquema crescer.
+     * referencie estas por chave estrangeira, o que resolve idempotency_keys
+     * sozinho. audit_logs precisou entrar na lista na mao: ela nao tem chave
+     * estrangeira para ninguem, de proposito, para que apagar um registro de
+     * origem nunca apague a trilha de auditoria dele.
      *
      * A alternativa comum seria anotar a classe de teste com @Transactional e
      * deixar o rollback limpar. Nao serve aqui: o teste passaria a rodar dentro da
@@ -76,7 +78,7 @@ public abstract class IntegrationTestSupport {
      */
     @BeforeEach
     void limparBase() {
-        jdbcTemplate.execute("TRUNCATE TABLE accounts, transactions CASCADE");
+        jdbcTemplate.execute("TRUNCATE TABLE accounts, transactions, audit_logs CASCADE");
     }
 
     protected String json(Object value) throws Exception {
