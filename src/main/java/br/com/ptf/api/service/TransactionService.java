@@ -8,6 +8,7 @@ import br.com.ptf.api.exception.AccountNotFoundException;
 import br.com.ptf.api.exception.IdempotencyConflictException;
 import br.com.ptf.api.exception.TransactionNotFoundException;
 import br.com.ptf.api.repository.AccountRepository;
+import br.com.ptf.api.repository.AdvisoryLockRepository;
 import br.com.ptf.api.repository.IdempotencyRecordRepository;
 import br.com.ptf.api.repository.TransactionRepository;
 import org.springframework.stereotype.Service;
@@ -23,6 +24,8 @@ import java.util.UUID;
 @Service
 public class TransactionService {
 
+    private static final String LOCK_NAMESPACE = "idempotency";
+
     /**
      * Resultado da criacao. O controller precisa saber se houve replay para
      * escolher entre 201 Created e 200 OK, e o service nao pode conhecer status
@@ -34,13 +37,16 @@ public class TransactionService {
     private final TransactionRepository transactionRepository;
     private final AccountRepository accountRepository;
     private final IdempotencyRecordRepository idempotencyRecordRepository;
+    private final AdvisoryLockRepository advisoryLockRepository;
 
     public TransactionService(TransactionRepository transactionRepository,
                               AccountRepository accountRepository,
-                              IdempotencyRecordRepository idempotencyRecordRepository) {
+                              IdempotencyRecordRepository idempotencyRecordRepository,
+                              AdvisoryLockRepository advisoryLockRepository) {
         this.transactionRepository = transactionRepository;
         this.accountRepository = accountRepository;
         this.idempotencyRecordRepository = idempotencyRecordRepository;
+        this.advisoryLockRepository = advisoryLockRepository;
     }
 
     /**
@@ -52,9 +58,14 @@ public class TransactionService {
      *   3. chave vista, hash outro  -> 409, porque a mesma chave esta descrevendo
      *                                  duas operacoes diferentes
      *
-     * O caso 3 e o que separa idempotencia de "ignorar repetido". Se a mesma chave
-     * pudesse valer para payloads diferentes, um retry com o corpo trocado passaria
-     * batido e o cliente receberia a resposta de uma operacao que nunca pediu.
+     * A trava na primeira linha e o que torna esses tres caminhos confiaveis. Sem
+     * ela, entre a consulta e a gravacao existe uma janela em que outra thread com
+     * a mesma chave tambem consulta, tambem nao encontra nada, e tambem processa.
+     * O resultado era dinheiro duplicado por alguns milissegundos, com o rollback
+     * da segunda thread limpando por acidente, nao por desenho.
+     *
+     * A trava e por chave, nao global: requisicoes com chaves diferentes continuam
+     * rodando em paralelo sem se enxergar.
      */
     @Transactional
     public Result create(String idempotencyKey, CreateTransactionRequest request) {
@@ -63,6 +74,9 @@ public class TransactionService {
         }
 
         String chave = idempotencyKey.trim();
+
+        advisoryLockRepository.lockUntilCommit(LOCK_NAMESPACE, chave);
+
         String hash = hashOf(request);
 
         Optional<IdempotencyRecord> registro = idempotencyRecordRepository.findById(chave);
