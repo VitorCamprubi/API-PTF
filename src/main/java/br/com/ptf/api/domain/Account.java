@@ -1,5 +1,6 @@
 package br.com.ptf.api.domain;
 
+import br.com.ptf.api.exception.InsufficientBalanceException;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -93,14 +94,25 @@ public class Account {
     }
 
     /**
-     * Debita um valor do saldo.
+     * Debita um valor do saldo, recusando o que nao cabe.
      *
-     * Ainda nao ha verificacao de saldo suficiente. Hoje quem impede saldo
-     * negativo e a constraint chk_accounts_balance_non_negative, que derruba a
-     * transacao inteira no commit. A regra explicita, com lock, entra na etapa 13.
+     * Ate a etapa 12 esta verificacao nao existia e quem barrava saldo negativo
+     * era a constraint chk_accounts_balance_non_negative, no commit. Funcionava,
+     * mas respondia a pergunta errada: a constraint protege o invariante do banco
+     * ("nunca negativo"), nao a decisao de negocio ("este debito e permitido?").
+     * Na pratica isso significava mensagem generica de violacao de integridade em
+     * vez de "saldo insuficiente", e um erro descoberto tarde demais.
+     *
+     * A constraint continua la, e deve continuar: ela e a ultima linha de defesa
+     * contra qualquer caminho de codigo futuro que esqueca de perguntar.
      */
     public void debit(BigDecimal amount) {
         requirePositive(amount);
+
+        if (this.balance.compareTo(amount) < 0) {
+            throw new InsufficientBalanceException(amount);
+        }
+
         this.balance = this.balance.subtract(amount).setScale(MONETARY_SCALE);
     }
 

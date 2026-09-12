@@ -30,13 +30,14 @@ spring:
     password: ptf
     listener:
       simple:
-        # Um consumidor so, por enquanto. Com mais de um, duas mensagens da mesma
-        # conta seriam processadas ao mesmo tempo e o saldo sofreria perda de
-        # atualizacao: as duas leem o mesmo valor e a ultima a gravar apaga o
-        # trabalho da outra. A etapa 13 resolve isso com lock pessimista e so
-        # entao vale aumentar este numero.
-        concurrency: 1
-        max-concurrency: 1
+        # Agora com quatro consumidores. Isso so passou a ser seguro depois do
+        # lock pessimista no saldo: sem ele, duas mensagens da mesma conta
+        # processadas ao mesmo tempo causariam perda de atualizacao, porque as
+        # duas leriam o mesmo saldo e a ultima a gravar apagaria a outra.
+        # Mensagens de contas diferentes seguem em paralelo de verdade; as da
+        # mesma conta se enfileiram no SELECT ... FOR UPDATE.
+        concurrency: 4
+        max-concurrency: 8
         # Mensagem que falhou nao volta para a fila sozinha. Sem isso, um erro
         # permanente vira laco infinito de reentrega.
         default-requeue-rejected: false

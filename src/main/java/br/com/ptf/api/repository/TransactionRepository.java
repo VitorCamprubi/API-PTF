@@ -22,4 +22,15 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
      */
     @Query("select t from Transaction t join fetch t.account where t.id = :id")
     Optional<Transaction> findByIdWithAccount(@Param("id") UUID id);
+
+    /**
+     * So o id da conta, sem carregar conta nem transacao.
+     *
+     * Existe por causa da ordem do lock no processamento: para travar a conta
+     * antes de ler o saldo, e preciso saber qual conta e sem antes trazer a
+     * entidade para o contexto de persistencia. Como account_id e a propria chave
+     * estrangeira da tabela transactions, esta consulta nao faz join nenhum.
+     */
+    @Query("select t.account.id from Transaction t where t.id = :id")
+    Optional<UUID> findAccountIdById(@Param("id") UUID id);
 }
