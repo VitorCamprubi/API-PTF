@@ -22,14 +22,17 @@ import java.util.UUID;
 /**
  * Um lancamento financeiro.
  *
- * A entidade e imutavel depois de criada: nao tem setter e todas as colunas
- * sao updatable = false. Transacao errada nao se corrige com UPDATE, se corrige
- * com uma transacao de estorno. O historico e o registro do que aconteceu, e
- * historico que pode ser reescrito nao serve de historico.
+ * Os fatos financeiros continuam imutaveis: conta, tipo, valor e descricao sao
+ * updatable = false e nao tem setter. O que passou a mudar foi o estado de
+ * PROCESSAMENTO, e so ele. A distincao importa: corrigir um valor errado continua
+ * exigindo um estorno; registrar que o lancamento saiu de PENDING para PROCESSED
+ * e apenas contar o que aconteceu com ele.
  */
 @Entity
 @Table(name = "transactions")
 public class Transaction {
+
+    private static final int MAX_FAILURE_REASON = 255;
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -61,6 +64,16 @@ public class Transaction {
     @Column(name = "description", length = 255, updatable = false)
     private String description;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false, length = 20)
+    private TransactionStatus status;
+
+    @Column(name = "processed_at")
+    private OffsetDateTime processedAt;
+
+    @Column(name = "failure_reason", length = MAX_FAILURE_REASON)
+    private String failureReason;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -73,6 +86,7 @@ public class Transaction {
         this.amount = Objects.requireNonNull(amount, "valor e obrigatorio")
                 .setScale(Account.MONETARY_SCALE);
         this.description = description;
+        this.status = TransactionStatus.PENDING;
     }
 
     @PrePersist
@@ -87,6 +101,31 @@ public class Transaction {
      */
     public void apply() {
         type.applyTo(account, amount);
+    }
+
+    public void markProcessed() {
+        this.status = TransactionStatus.PROCESSED;
+        this.processedAt = OffsetDateTime.now(ZoneOffset.UTC);
+        this.failureReason = null;
+    }
+
+    public void markFailed(String reason) {
+        this.status = TransactionStatus.FAILED;
+        this.processedAt = OffsetDateTime.now(ZoneOffset.UTC);
+        this.failureReason = truncate(reason);
+    }
+
+    public boolean isPending() {
+        return status == TransactionStatus.PENDING;
+    }
+
+    private static String truncate(String reason) {
+        if (reason == null) {
+            return null;
+        }
+        return reason.length() <= MAX_FAILURE_REASON
+                ? reason
+                : reason.substring(0, MAX_FAILURE_REASON);
     }
 
     public UUID getId() {
@@ -107,6 +146,18 @@ public class Transaction {
 
     public String getDescription() {
         return description;
+    }
+
+    public TransactionStatus getStatus() {
+        return status;
+    }
+
+    public OffsetDateTime getProcessedAt() {
+        return processedAt;
+    }
+
+    public String getFailureReason() {
+        return failureReason;
     }
 
     public OffsetDateTime getCreatedAt() {
@@ -131,6 +182,6 @@ public class Transaction {
 
     @Override
     public String toString() {
-        return "Transaction{id=%s, type=%s, amount=%s}".formatted(id, type, amount);
+        return "Transaction{id=%s, type=%s, amount=%s, status=%s}".formatted(id, type, amount, status);
     }
 }

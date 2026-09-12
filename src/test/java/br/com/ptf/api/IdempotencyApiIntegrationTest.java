@@ -1,6 +1,7 @@
 package br.com.ptf.api;
 
 import br.com.ptf.api.domain.Account;
+import br.com.ptf.api.domain.TransactionStatus;
 import br.com.ptf.api.domain.TransactionType;
 import br.com.ptf.api.dto.CreateTransactionRequest;
 import br.com.ptf.api.repository.AccountRepository;
@@ -30,14 +31,14 @@ class IdempotencyApiIntegrationTest extends IntegrationTestSupport {
     private TransactionRepository transactionRepository;
 
     @Test
-    @DisplayName("mesma chave e mesmo payload: a segunda chamada devolve a transacao original sem debitar de novo")
+    @DisplayName("mesma chave e mesmo payload: a segunda chamada devolve a transacao original sem creditar de novo")
     void replay() throws Exception {
         Account conta = novaConta();
         String chave = UUID.randomUUID().toString();
 
         String primeiroId = idDaResposta(
                 postTransacao(chave, conta.getId(), "100.00")
-                        .andExpect(status().isCreated()));
+                        .andExpect(status().isAccepted()));
 
         String segundoId = idDaResposta(
                 postTransacao(chave, conta.getId(), "100.00")
@@ -46,7 +47,11 @@ class IdempotencyApiIntegrationTest extends IntegrationTestSupport {
 
         assertThat(segundoId).isEqualTo(primeiroId);
         assertThat(transactionRepository.count()).isEqualTo(1);
-        assertThat(saldoDe(conta.getId())).isEqualByComparingTo("100.00");
+
+        aguardar(() -> {
+            assertThat(statusDe(UUID.fromString(primeiroId))).isEqualTo(TransactionStatus.PROCESSED);
+            assertThat(saldoDe(conta.getId())).isEqualByComparingTo("100.00");
+        });
     }
 
     @Test
@@ -55,14 +60,11 @@ class IdempotencyApiIntegrationTest extends IntegrationTestSupport {
         Account conta = novaConta();
         String chave = UUID.randomUUID().toString();
 
-        postTransacao(chave, conta.getId(), "100.00")
-                .andExpect(status().isCreated());
-
-        postTransacao(chave, conta.getId(), "200.00")
-                .andExpect(status().isConflict());
+        postTransacao(chave, conta.getId(), "100.00").andExpect(status().isAccepted());
+        postTransacao(chave, conta.getId(), "200.00").andExpect(status().isConflict());
 
         assertThat(transactionRepository.count()).isEqualTo(1);
-        assertThat(saldoDe(conta.getId())).isEqualByComparingTo("100.00");
+        aguardar(() -> assertThat(saldoDe(conta.getId())).isEqualByComparingTo("100.00"));
     }
 
     @Test
@@ -71,13 +73,12 @@ class IdempotencyApiIntegrationTest extends IntegrationTestSupport {
         Account conta = novaConta();
 
         postTransacao(UUID.randomUUID().toString(), conta.getId(), "100.00")
-                .andExpect(status().isCreated());
-
+                .andExpect(status().isAccepted());
         postTransacao(UUID.randomUUID().toString(), conta.getId(), "100.00")
-                .andExpect(status().isCreated());
+                .andExpect(status().isAccepted());
 
         assertThat(transactionRepository.count()).isEqualTo(2);
-        assertThat(saldoDe(conta.getId())).isEqualByComparingTo("200.00");
+        aguardar(() -> assertThat(saldoDe(conta.getId())).isEqualByComparingTo("200.00"));
     }
 
     /**
@@ -90,11 +91,11 @@ class IdempotencyApiIntegrationTest extends IntegrationTestSupport {
     void semChave() throws Exception {
         Account conta = novaConta();
 
-        postTransacao(null, conta.getId(), "100.00").andExpect(status().isCreated());
-        postTransacao(null, conta.getId(), "100.00").andExpect(status().isCreated());
+        postTransacao(null, conta.getId(), "100.00").andExpect(status().isAccepted());
+        postTransacao(null, conta.getId(), "100.00").andExpect(status().isAccepted());
 
         assertThat(transactionRepository.count()).isEqualTo(2);
-        assertThat(saldoDe(conta.getId())).isEqualByComparingTo("200.00");
+        aguardar(() -> assertThat(saldoDe(conta.getId())).isEqualByComparingTo("200.00"));
     }
 
     private Account novaConta() {
@@ -103,6 +104,10 @@ class IdempotencyApiIntegrationTest extends IntegrationTestSupport {
 
     private BigDecimal saldoDe(UUID contaId) {
         return accountRepository.findById(contaId).orElseThrow().getBalance();
+    }
+
+    private TransactionStatus statusDe(UUID transacaoId) {
+        return transactionRepository.findById(transacaoId).orElseThrow().getStatus();
     }
 
     private String idDaResposta(ResultActions resultado) throws Exception {

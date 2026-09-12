@@ -17,13 +17,6 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 import java.net.URI;
 import java.util.UUID;
 
-/**
- * Transacao e recurso de primeira classe, em /transactions, e nao um sub-recurso
- * de conta. A conta e um campo do lancamento, nao o dono dele: na etapa 12 a
- * transacao passa a ter ciclo de vida proprio (fila, status, reprocessamento) e
- * mais adiante uma transferencia envolve duas contas, o que nao caberia numa URL
- * pendurada em uma conta so.
- */
 @RestController
 @RequestMapping("/transactions")
 public class TransactionController {
@@ -38,13 +31,15 @@ public class TransactionController {
     }
 
     /**
-     * A chave de idempotencia vem em header, nao no corpo, porque nao e dado da
-     * transacao: e metadado do protocolo. O corpo descreve o que o cliente quer;
-     * o header descreve como esta tentativa deve ser tratada se ja tiver chegado.
+     * Agora devolve 202 Accepted, nao mais 201 Created.
      *
-     * Ela e opcional por compatibilidade com o contrato que ja existe. Numa API
-     * financeira de verdade seria obrigatoria, mas torna-la obrigatoria agora
-     * quebraria todo cliente atual, e quebra de contrato pede versionamento.
+     * A diferenca nao e cosmetica. 201 significa "o recurso existe e esta pronto";
+     * 202 significa "aceitei o pedido, o resultado vem depois". Devolver 201 num
+     * fluxo assincrono e mentir para o cliente: ele consultaria o saldo logo em
+     * seguida, veria o valor antigo e concluiria que a API perdeu a operacao.
+     *
+     * O header Location continua, e agora tem uma funcao a mais: e o endereco para
+     * o cliente acompanhar o status ate sair de PENDING.
      */
     @PostMapping
     public ResponseEntity<TransactionResponse> create(
@@ -54,10 +49,6 @@ public class TransactionController {
         TransactionService.Result result = transactionService.create(idempotencyKey, request);
         TransactionResponse body = TransactionResponse.from(result.transaction());
 
-        // Replay nao cria nada, entao nao e 201. E 200 com o mesmo corpo da
-        // primeira vez, mais um header dizendo que isto foi uma repeticao. O
-        // cliente que so olha o status ve sucesso; o que investiga descobre o
-        // que aconteceu de verdade.
         if (result.replay()) {
             return ResponseEntity.ok()
                     .header(IDEMPOTENT_REPLAY_HEADER, "true")
@@ -69,7 +60,7 @@ public class TransactionController {
                 .buildAndExpand(result.transaction().getId())
                 .toUri();
 
-        return ResponseEntity.created(location).body(body);
+        return ResponseEntity.accepted().location(location).body(body);
     }
 
     @GetMapping("/{id}")

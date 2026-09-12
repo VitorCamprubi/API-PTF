@@ -3,6 +3,7 @@ package br.com.ptf.api;
 import br.com.ptf.api.domain.Account;
 import br.com.ptf.api.domain.AuditAction;
 import br.com.ptf.api.domain.AuditLog;
+import br.com.ptf.api.domain.TransactionStatus;
 import br.com.ptf.api.domain.TransactionType;
 import br.com.ptf.api.dto.CreateAccountRequest;
 import br.com.ptf.api.dto.CreateTransactionRequest;
@@ -45,18 +46,27 @@ class AuditApiIntegrationTest extends IntegrationTestSupport {
         assertThat(auditLogRepository.countByAction(AuditAction.ACCOUNT_CREATED)).isEqualTo(1);
     }
 
+    /**
+     * A trilha agora tem dois momentos, e essa separacao e a propria mudanca da
+     * etapa 12: CREATED e gravado pela requisicao, PROCESSED pelo consumidor,
+     * transacoes diferentes, instantes diferentes.
+     */
     @Test
-    @DisplayName("criar transacao registra TRANSACTION_CREATED com tipo e valor")
-    void transacaoCriadaEAuditada() throws Exception {
+    @DisplayName("transacao gera CREATED na requisicao e PROCESSED no consumidor")
+    void transacaoAuditadaNosDoisMomentos() throws Exception {
         Account conta = novaConta();
 
-        postTransacao(null, conta.getId(), "100.00").andExpect(status().isCreated());
+        postTransacao(null, conta.getId(), TransactionType.CREDIT, "100.00")
+                .andExpect(status().isAccepted());
+
+        assertThat(auditLogRepository.countByAction(AuditAction.TRANSACTION_CREATED)).isEqualTo(1);
+
+        aguardar(() ->
+                assertThat(auditLogRepository.countByAction(AuditAction.TRANSACTION_PROCESSED)).isEqualTo(1));
 
         List<AuditLog> logs = auditLogRepository.findAll();
-        assertThat(logs).hasSize(1);
-        assertThat(logs.get(0).getAction()).isEqualTo(AuditAction.TRANSACTION_CREATED);
-        assertThat(logs.get(0).getEntityType()).isEqualTo("Transaction");
-        assertThat(logs.get(0).getDetail()).contains("CREDIT").contains("100.0000");
+        assertThat(logs).hasSize(2);
+        assertThat(logs).allSatisfy(log -> assertThat(log.getEntityType()).isEqualTo("Transaction"));
     }
 
     @Test
@@ -65,8 +75,10 @@ class AuditApiIntegrationTest extends IntegrationTestSupport {
         Account conta = novaConta();
         String chave = UUID.randomUUID().toString();
 
-        postTransacao(chave, conta.getId(), "100.00").andExpect(status().isCreated());
-        postTransacao(chave, conta.getId(), "100.00").andExpect(status().isOk());
+        postTransacao(chave, conta.getId(), TransactionType.CREDIT, "100.00")
+                .andExpect(status().isAccepted());
+        postTransacao(chave, conta.getId(), TransactionType.CREDIT, "100.00")
+                .andExpect(status().isOk());
 
         assertThat(auditLogRepository.countByAction(AuditAction.TRANSACTION_CREATED)).isEqualTo(1);
         assertThat(auditLogRepository.countByAction(AuditAction.TRANSACTION_REPLAYED)).isEqualTo(1);
@@ -75,10 +87,9 @@ class AuditApiIntegrationTest extends IntegrationTestSupport {
     /**
      * A prova do REQUIRES_NEW.
      *
-     * A requisicao termina em 409 e a transacao inteira volta atras: nenhum
-     * lancamento novo, saldo intacto. Mas o registro de que alguem reutilizou a
-     * chave com outro payload continua la, porque foi gravado numa transacao
-     * separada que ja tinha commitado.
+     * A requisicao termina em 409 e a transacao inteira volta atras. Mas o
+     * registro de que alguem reutilizou a chave com outro payload continua la,
+     * porque foi gravado numa transacao separada que ja tinha commitado.
      */
     @Test
     @DisplayName("conflito de chave da rollback na operacao mas a auditoria sobrevive")
@@ -86,11 +97,12 @@ class AuditApiIntegrationTest extends IntegrationTestSupport {
         Account conta = novaConta();
         String chave = UUID.randomUUID().toString();
 
-        postTransacao(chave, conta.getId(), "100.00").andExpect(status().isCreated());
-        postTransacao(chave, conta.getId(), "200.00").andExpect(status().isConflict());
+        postTransacao(chave, conta.getId(), TransactionType.CREDIT, "100.00")
+                .andExpect(status().isAccepted());
+        postTransacao(chave, conta.getId(), TransactionType.CREDIT, "200.00")
+                .andExpect(status().isConflict());
 
         assertThat(transactionRepository.count()).isEqualTo(1);
-        assertThat(saldoDe(conta.getId())).isEqualByComparingTo("100.00");
 
         assertThat(auditLogRepository.countByAction(AuditAction.IDEMPOTENCY_CONFLICT))
                 .as("a tentativa recusada tem que deixar rastro")
@@ -102,25 +114,28 @@ class AuditApiIntegrationTest extends IntegrationTestSupport {
     }
 
     /**
-     * O espelho do teste anterior.
+     * O espelho: falha no processamento gera FAILED e nunca PROCESSED.
      *
-     * Aqui a auditoria foi gravada na mesma transacao do lancamento, entao o
-     * rollback causado pela constraint de saldo leva as duas coisas embora. E o
-     * comportamento desejado: nao pode existir registro afirmando que um debito
-     * aconteceu quando ele nao aconteceu.
+     * A auditoria de sucesso e gravada na mesma transacao que aplica o saldo, e o
+     * rollback leva as duas juntas. Nao pode existir registro afirmando que um
+     * debito aconteceu quando ele nao aconteceu.
      */
     @Test
-    @DisplayName("debito recusado pelo banco nao deixa auditoria de transacao criada")
-    void rollbackApagaAuditoriaDaMesmaTransacao() throws Exception {
+    @DisplayName("debito recusado gera TRANSACTION_FAILED e nenhum PROCESSED")
+    void falhaNoProcessamentoEAuditada() throws Exception {
         Account conta = novaConta();
 
-        postTransacao(null, conta.getId(), "100.00").andExpect(status().isCreated());
-        postTransacaoDebito(conta.getId(), "500.00").andExpect(status().isConflict());
+        postTransacao(null, conta.getId(), TransactionType.DEBIT, "500.00")
+                .andExpect(status().isAccepted());
 
-        assertThat(auditLogRepository.countByAction(AuditAction.TRANSACTION_CREATED))
-                .as("so o credito bem-sucedido pode ter deixado registro")
-                .isEqualTo(1);
-        assertThat(transactionRepository.count()).isEqualTo(1);
+        aguardar(() ->
+                assertThat(auditLogRepository.countByAction(AuditAction.TRANSACTION_FAILED)).isEqualTo(1));
+
+        assertThat(auditLogRepository.countByAction(AuditAction.TRANSACTION_PROCESSED)).isZero();
+        assertThat(transactionRepository.findAll())
+                .singleElement()
+                .satisfies(t -> assertThat(t.getStatus()).isEqualTo(TransactionStatus.FAILED));
+        assertThat(saldoDe(conta.getId())).isEqualByComparingTo("0.00");
     }
 
     private Account novaConta() {
@@ -131,23 +146,17 @@ class AuditApiIntegrationTest extends IntegrationTestSupport {
         return accountRepository.findById(contaId).orElseThrow().getBalance();
     }
 
-    private ResultActions postTransacao(String chave, UUID contaId, String valor) throws Exception {
+    private ResultActions postTransacao(String chave, UUID contaId, TransactionType tipo, String valor)
+            throws Exception {
         var requisicao = post("/transactions")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(json(new CreateTransactionRequest(
-                        contaId, TransactionType.CREDIT, new BigDecimal(valor), "deposito")));
+                        contaId, tipo, new BigDecimal(valor), "teste")));
 
         if (chave != null) {
             requisicao = requisicao.header("Idempotency-Key", chave);
         }
 
         return mockMvc.perform(requisicao);
-    }
-
-    private ResultActions postTransacaoDebito(UUID contaId, String valor) throws Exception {
-        return mockMvc.perform(post("/transactions")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(json(new CreateTransactionRequest(
-                        contaId, TransactionType.DEBIT, new BigDecimal(valor), "saque"))));
     }
 }

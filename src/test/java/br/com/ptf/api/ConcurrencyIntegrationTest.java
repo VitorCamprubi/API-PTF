@@ -23,12 +23,12 @@ import java.util.concurrent.TimeUnit;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * O teste que a etapa 9 nao tinha como escrever.
+ * Corrida entre requisicoes com a mesma chave de idempotencia.
  *
- * Ele ataca o service direto, sem passar por HTTP, porque a corrida esta no
- * service e nao no controller. Oito threads sao soltas ao mesmo tempo por um
- * CountDownLatch: sem a largada sincronizada elas se enfileirariam naturalmente e
- * o teste passaria mesmo com o codigo errado, que e o pior tipo de teste.
+ * Ataca o service direto, sem passar por HTTP, porque a corrida esta no service.
+ * Oito threads sao soltas ao mesmo tempo por um CountDownLatch: sem a largada
+ * sincronizada elas se enfileirariam naturalmente e o teste passaria mesmo com o
+ * codigo errado, que e o pior tipo de teste.
  */
 class ConcurrencyIntegrationTest extends IntegrationTestSupport {
 
@@ -89,20 +89,19 @@ class ConcurrencyIntegrationTest extends IntegrationTestSupport {
                 .isEqualTo(1);
 
         assertThat(transactionRepository.count()).isEqualTo(1);
-        assertThat(accountRepository.findById(conta.getId()).orElseThrow().getBalance())
-                .as("o saldo tem que refletir um credito, nao oito")
-                .isEqualByComparingTo("100.00");
+
+        aguardar(() -> assertThat(accountRepository.findById(conta.getId()).orElseThrow().getBalance())
+                .as("uma unica mensagem foi para a fila, entao o saldo recebe um unico credito")
+                .isEqualByComparingTo("100.00"));
     }
 
     /**
      * Uma conta por thread, de proposito.
      *
-     * Se as oito creditassem a mesma conta, o teste falharia de forma
-     * intermitente por perda de atualizacao no saldo: cada transacao le o saldo,
-     * soma em memoria e grava o total que calculou, entao a ultima a gravar
-     * sobrescreve o trabalho das anteriores. Esse e um problema real e ainda
-     * aberto no projeto, mas e outro problema, e a etapa 13 resolve ele com lock
-     * pessimista. Misturar os dois aqui esconderia qual dos dois quebrou.
+     * Se as oito creditassem a mesma conta, este teste dependeria de como o
+     * consumidor lida com concorrencia no saldo, que e assunto da etapa 13.
+     * Aqui o alvo e outro: provar que a trava e por chave e nao global, ou seja,
+     * que chaves diferentes nao se enfileiram.
      */
     @Test
     @DisplayName("chaves diferentes em paralelo nao se bloqueiam e geram um lancamento cada")
@@ -136,9 +135,12 @@ class ConcurrencyIntegrationTest extends IntegrationTestSupport {
         }
 
         assertThat(transactionRepository.count()).isEqualTo(THREADS);
-        for (Account conta : contas) {
-            assertThat(accountRepository.findById(conta.getId()).orElseThrow().getBalance())
-                    .isEqualByComparingTo("10.00");
-        }
+
+        aguardar(() -> {
+            for (Account conta : contas) {
+                assertThat(accountRepository.findById(conta.getId()).orElseThrow().getBalance())
+                        .isEqualByComparingTo("10.00");
+            }
+        });
     }
 }

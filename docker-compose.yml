@@ -9,12 +9,27 @@ services:
     ports:
       - "5433:5432"
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - ptf-postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ptf -d ptf"]
       interval: 5s
       timeout: 5s
       retries: 10
 
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: api-ptf-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ptf
+      RABBITMQ_DEFAULT_PASS: ptf
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
 volumes:
-  postgres-data:
+  ptf-postgres-data:
