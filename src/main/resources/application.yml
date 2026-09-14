@@ -42,6 +42,14 @@ spring:
         # permanente vira laco infinito de reentrega.
         default-requeue-rejected: false
 
+ptf:
+  outbox:
+    # Intervalo entre ciclos do publicador. E o atraso maximo que uma transacao
+    # espera antes de sair para a fila; o custo de diminuir e mais consultas ao
+    # banco por segundo, quase sempre vazias.
+    intervalo-ms: 500
+    tamanho-do-lote: 50
+
 server:
   port: 8081
 

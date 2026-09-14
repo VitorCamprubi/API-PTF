@@ -8,12 +8,12 @@ import br.com.ptf.api.dto.CreateTransactionRequest;
 import br.com.ptf.api.exception.AccountNotFoundException;
 import br.com.ptf.api.exception.IdempotencyConflictException;
 import br.com.ptf.api.exception.TransactionNotFoundException;
+import br.com.ptf.api.config.RabbitConfig;
 import br.com.ptf.api.messaging.TransactionMessage;
 import br.com.ptf.api.repository.AccountRepository;
 import br.com.ptf.api.repository.AdvisoryLockRepository;
 import br.com.ptf.api.repository.IdempotencyRecordRepository;
 import br.com.ptf.api.repository.TransactionRepository;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -45,20 +45,20 @@ public class TransactionService {
     private final IdempotencyRecordRepository idempotencyRecordRepository;
     private final AdvisoryLockRepository advisoryLockRepository;
     private final AuditService auditService;
-    private final ApplicationEventPublisher eventPublisher;
+    private final OutboxService outboxService;
 
     public TransactionService(TransactionRepository transactionRepository,
                               AccountRepository accountRepository,
                               IdempotencyRecordRepository idempotencyRecordRepository,
                               AdvisoryLockRepository advisoryLockRepository,
                               AuditService auditService,
-                              ApplicationEventPublisher eventPublisher) {
+                              OutboxService outboxService) {
         this.transactionRepository = transactionRepository;
         this.accountRepository = accountRepository;
         this.idempotencyRecordRepository = idempotencyRecordRepository;
         this.advisoryLockRepository = advisoryLockRepository;
         this.auditService = auditService;
-        this.eventPublisher = eventPublisher;
+        this.outboxService = outboxService;
     }
 
     @Transactional
@@ -118,9 +118,14 @@ public class TransactionService {
      * e descobrir depois que o lancamento morreu. Validar o que da para validar
      * antes de aceitar e o que separa assincrono de irresponsavel.
      *
-     * O publishEvent nao fala com o RabbitMQ. Ele registra um evento interno que o
-     * Spring so entrega depois do commit desta transacao. Quem fala com o broker e
-     * o TransactionPublisher, e o porque esta la.
+     * A mensagem nao vai para o broker aqui, e nem depois do commit: ela e gravada
+     * na tabela outbox, no mesmo INSERT-e-commit do lancamento. Ou as duas coisas
+     * existem, ou nenhuma. Quem leva ao broker e o OutboxScheduler, lendo a tabela.
+     *
+     * O que isso resolve em relacao a etapa 12: la, se a aplicacao morresse entre
+     * o commit e o envio, a transacao ficava PENDING para sempre, porque a ordem
+     * de publicar existia apenas na memoria do processo. Agora ela existe no banco,
+     * e sobrevive a queda.
      */
     private Transaction registrar(CreateTransactionRequest request) {
         Account account = accountRepository.findById(request.accountId())
@@ -140,7 +145,11 @@ public class TransactionService {
                 salva.getId().toString(),
                 "%s %s".formatted(salva.getType(), salva.getAmount()));
 
-        eventPublisher.publishEvent(new TransactionMessage(salva.getId()));
+        outboxService.registrar(
+                "Transaction",
+                salva.getId().toString(),
+                RabbitConfig.ROUTING_KEY,
+                new TransactionMessage(salva.getId()));
 
         return salva;
     }

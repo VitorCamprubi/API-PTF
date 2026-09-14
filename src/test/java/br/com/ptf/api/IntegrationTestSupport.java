@@ -82,7 +82,7 @@ public abstract class IntegrationTestSupport {
      */
     @BeforeEach
     void limparBase() {
-        jdbcTemplate.execute("TRUNCATE TABLE accounts, transactions, audit_logs CASCADE");
+        jdbcTemplate.execute("TRUNCATE TABLE accounts, transactions, audit_logs, outbox_messages CASCADE");
     }
 
     /**
