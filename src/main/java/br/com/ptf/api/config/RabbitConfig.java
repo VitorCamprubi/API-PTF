@@ -3,6 +3,7 @@ package br.com.ptf.api.config;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
+import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.core.TopicExchange;
@@ -14,18 +15,16 @@ import org.springframework.context.annotation.Configuration;
 /**
  * Topologia do broker declarada em codigo.
  *
- * O Spring cria fila, exchange e binding na subida se nao existirem. Isso tira do
- * deploy a etapa manual de "alguem entra no painel do RabbitMQ e cria a fila", que
- * e exatamente o tipo de passo que funciona no ambiente de quem escreveu e falha
- * em producao as duas da manha.
+ * A fila principal agora aponta para uma dead letter exchange. Quando o RabbitMQ
+ * recebe uma rejeicao definitiva de uma mensagem desta fila, em vez de descartar,
+ * ele a reencaminha para a DLX, que a entrega na fila de mortas. Nada se perde:
+ * o que nao pode ser processado fica guardado para alguem olhar.
  *
- * Exchange do tipo topic em vez de enviar direto para a fila: quem publica nao
- * precisa saber quem consome. Quando a etapa 15 adicionar dead-letter, ou quando
- * um segundo consumidor quiser o mesmo evento, muda-se o binding sem tocar em
- * quem publica.
- *
- * Tudo durable: fila e exchange sobrevivem a um restart do broker. Mensagem de
- * dinheiro que some quando o RabbitMQ reinicia nao serve.
+ * ATENCAO OPERACIONAL: argumentos de fila sao imutaveis no RabbitMQ. Uma fila que
+ * ja existe sem x-dead-letter-exchange NAO passa a ter esse argumento por
+ * redeclaracao; o broker recusa com PRECONDITION_FAILED. Em producao isso se
+ * resolve criando uma fila nova e migrando os consumidores. No ambiente local,
+ * apagando a fila ou recriando o container.
  */
 @Configuration
 public class RabbitConfig {
@@ -34,6 +33,10 @@ public class RabbitConfig {
     public static final String QUEUE = "ptf.transactions.process";
     public static final String ROUTING_KEY = "transaction.created";
 
+    public static final String DEAD_LETTER_EXCHANGE = "ptf.transactions.dlx";
+    public static final String DEAD_LETTER_QUEUE = "ptf.transactions.process.dlq";
+    public static final String DEAD_LETTER_ROUTING_KEY = "transaction.created.dead";
+
     @Bean
     public TopicExchange transactionsExchange() {
         return new TopicExchange(EXCHANGE, true, false);
@@ -41,7 +44,10 @@ public class RabbitConfig {
 
     @Bean
     public Queue transactionProcessQueue() {
-        return QueueBuilder.durable(QUEUE).build();
+        return QueueBuilder.durable(QUEUE)
+                .deadLetterExchange(DEAD_LETTER_EXCHANGE)
+                .deadLetterRoutingKey(DEAD_LETTER_ROUTING_KEY)
+                .build();
     }
 
     @Bean
@@ -50,6 +56,36 @@ public class RabbitConfig {
         return BindingBuilder.bind(transactionProcessQueue)
                 .to(transactionsExchange)
                 .with(ROUTING_KEY);
+    }
+
+    /**
+     * Direct e nao topic: a DLX tem um destino unico e nao precisa de roteamento
+     * por padrao de chave.
+     */
+    @Bean
+    public DirectExchange transactionsDeadLetterExchange() {
+        return new DirectExchange(DEAD_LETTER_EXCHANGE, true, false);
+    }
+
+    /**
+     * A fila de mortas nao tem consumidor, e isso e intencional.
+     *
+     * Ela e um deposito para inspecao humana. Ligar um consumidor automatico nela
+     * costuma ser a forma mais rapida de transformar um problema visivel num
+     * problema invisivel: a mensagem volta para o mesmo codigo que ja falhou, e o
+     * unico resultado e o erro acontecer de novo, mais tarde e com menos contexto.
+     */
+    @Bean
+    public Queue transactionDeadLetterQueue() {
+        return QueueBuilder.durable(DEAD_LETTER_QUEUE).build();
+    }
+
+    @Bean
+    public Binding transactionDeadLetterBinding(Queue transactionDeadLetterQueue,
+                                                DirectExchange transactionsDeadLetterExchange) {
+        return BindingBuilder.bind(transactionDeadLetterQueue)
+                .to(transactionsDeadLetterExchange)
+                .with(DEAD_LETTER_ROUTING_KEY);
     }
 
     /**

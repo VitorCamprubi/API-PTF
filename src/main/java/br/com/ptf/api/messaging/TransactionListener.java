@@ -1,6 +1,7 @@
 package br.com.ptf.api.messaging;
 
 import br.com.ptf.api.config.RabbitConfig;
+import br.com.ptf.api.exception.BusinessException;
 import br.com.ptf.api.service.TransactionProcessingService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -8,20 +9,27 @@ import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
 
 /**
- * Consumidor da fila.
+ * Consumidor da fila, agora com duas politicas de erro.
  *
- * Repare no que este metodo NAO tem: @Transactional. De proposito. Se ele fosse
- * transacional, a falha no processamento derrubaria a mesma transacao em que a
- * marcacao de FAILED seria gravada, e o lancamento ficaria PENDING para sempre,
- * sem nenhum registro do motivo. Sao duas transacoes distintas: uma tenta
- * aplicar, outra registra que nao deu.
+ * A pergunta que separa as duas: TENTAR DE NOVO RESOLVERIA?
  *
- * O try/catch tambem tem funcao de protocolo, nao so de log. Se a excecao
- * escapasse daqui, o Spring AMQP devolveria a mensagem para a fila, e ela seria
- * entregue de novo, e de novo, para sempre: e a poison message, que consome CPU
- * eternamente processando algo que nunca vai dar certo. Tratar a falha aqui faz a
- * mensagem ser confirmada. Retry de verdade, com limite e fila de descarte, e a
- * etapa 15.
+ * Saldo insuficiente nao resolve. Tentar mil vezes vai dar saldo insuficiente mil
+ * vezes, so que gastando CPU e enchendo o log. Isso e falha PERMANENTE, tratada
+ * aqui mesmo: marca o lancamento como FAILED, com motivo, e confirma a mensagem.
+ *
+ * Banco fora do ar, deadlock, timeout de rede: resolve, sim, e em geral em
+ * segundos. Isso e falha TRANSITORIA, e a excecao sobe. O Spring AMQP entao
+ * reentrega a mensagem ao proprio metodo algumas vezes, com intervalo crescente.
+ * Se depois das tentativas o problema continuar, a mensagem e rejeitada em
+ * definitivo e o broker a manda para a dead letter queue.
+ *
+ * Tratar tudo igual e o erro comum dos dois lados: quem tenta de novo o que nunca
+ * vai dar certo constroi um laco infinito; quem desiste na primeira falha perde
+ * dinheiro por causa de um blip de rede.
+ *
+ * O criterio aqui e o tipo da excecao, e e por isso que BusinessException existe
+ * como familia desde a etapa 5: ela significa "a regra de negocio disse nao", que
+ * e por definicao uma resposta estavel.
  */
 @Component
 public class TransactionListener {
@@ -38,9 +46,15 @@ public class TransactionListener {
     public void onTransactionCreated(TransactionMessage message) {
         try {
             processingService.process(message.transactionId());
-        } catch (Exception e) {
-            log.warn("falha ao processar a transacao {}: {}", message.transactionId(), e.getMessage());
+
+        } catch (BusinessException e) {
+            log.warn("transacao {} recusada em definitivo: {}", message.transactionId(), e.getMessage());
             processingService.markFailed(message.transactionId(), e.getMessage());
+
+        } catch (Exception e) {
+            log.error("falha transitoria ao processar a transacao {}, sera retentada: {}",
+                    message.transactionId(), e.getMessage());
+            throw e;
         }
     }
 }

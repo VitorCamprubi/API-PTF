@@ -38,9 +38,22 @@ spring:
         # mesma conta se enfileiram no SELECT ... FOR UPDATE.
         concurrency: 4
         max-concurrency: 8
-        # Mensagem que falhou nao volta para a fila sozinha. Sem isso, um erro
-        # permanente vira laco infinito de reentrega.
+        # Mensagem rejeitada nao volta para o fim da fila: vai para a dead letter
+        # exchange. Com true, um erro permanente viraria laco infinito de
+        # reentrega e a DLQ nunca receberia nada.
         default-requeue-rejected: false
+        retry:
+          # Retentativas em memoria, dentro do proprio consumidor, antes de
+          # desistir. Servem para falha transitoria: banco que piscou, timeout de
+          # rede, deadlock. Falha de negocio nem chega aqui, porque o listener a
+          # trata e confirma a mensagem.
+          enabled: true
+          max-attempts: 3
+          # Espera crescente entre tentativas: 500ms, 1s, 2s. Repetir na mesma
+          # cadencia contra um banco sobrecarregado so piora a sobrecarga.
+          initial-interval: 500ms
+          multiplier: 2
+          max-interval: 5s
 
 ptf:
   outbox:
