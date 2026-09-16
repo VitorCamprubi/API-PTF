@@ -2,7 +2,9 @@ package br.com.ptf.api.messaging;
 
 import br.com.ptf.api.config.RabbitConfig;
 import br.com.ptf.api.exception.BusinessException;
+import br.com.ptf.api.metrics.TransactionMetrics;
 import br.com.ptf.api.service.TransactionProcessingService;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -37,23 +39,33 @@ public class TransactionListener {
     private static final Logger log = LoggerFactory.getLogger(TransactionListener.class);
 
     private final TransactionProcessingService processingService;
+    private final TransactionMetrics metrics;
 
-    public TransactionListener(TransactionProcessingService processingService) {
+    public TransactionListener(TransactionProcessingService processingService,
+                               TransactionMetrics metrics) {
         this.processingService = processingService;
+        this.metrics = metrics;
     }
 
     @RabbitListener(queues = RabbitConfig.QUEUE)
     public void onTransactionCreated(TransactionMessage message) {
+        Timer.Sample cronometro = metrics.iniciarCronometro();
+
         try {
             processingService.process(message.transactionId());
+            metrics.registrarDuracao(cronometro, "success");
 
         } catch (BusinessException e) {
             log.warn("transacao {} recusada em definitivo: {}", message.transactionId(), e.getMessage());
             processingService.markFailed(message.transactionId(), e.getMessage());
+            metrics.contarFalha(TransactionMetrics.CAUSA_NEGOCIO);
+            metrics.registrarDuracao(cronometro, "business_failure");
 
         } catch (Exception e) {
             log.error("falha transitoria ao processar a transacao {}, sera retentada: {}",
                     message.transactionId(), e.getMessage());
+            metrics.contarFalha(TransactionMetrics.CAUSA_TRANSITORIA);
+            metrics.registrarDuracao(cronometro, "error");
             throw e;
         }
     }

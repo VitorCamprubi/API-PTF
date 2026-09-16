@@ -4,6 +4,7 @@ import br.com.ptf.api.domain.AuditAction;
 import br.com.ptf.api.domain.Transaction;
 import br.com.ptf.api.exception.AccountNotFoundException;
 import br.com.ptf.api.exception.TransactionNotFoundException;
+import br.com.ptf.api.metrics.TransactionMetrics;
 import br.com.ptf.api.repository.AccountRepository;
 import br.com.ptf.api.repository.TransactionRepository;
 import org.slf4j.Logger;
@@ -24,13 +25,16 @@ public class TransactionProcessingService {
     private final TransactionRepository transactionRepository;
     private final AccountRepository accountRepository;
     private final AuditService auditService;
+    private final TransactionMetrics metrics;
 
     public TransactionProcessingService(TransactionRepository transactionRepository,
                                         AccountRepository accountRepository,
-                                        AuditService auditService) {
+                                        AuditService auditService,
+                                        TransactionMetrics metrics) {
         this.transactionRepository = transactionRepository;
         this.accountRepository = accountRepository;
         this.auditService = auditService;
+        this.metrics = metrics;
     }
 
     /**
@@ -77,6 +81,8 @@ public class TransactionProcessingService {
                 "Transaction",
                 transactionId.toString(),
                 "%s %s".formatted(transaction.getType(), transaction.getAmount()));
+
+        metrics.contarProcessada(transaction.getType());
     }
 
     /**

@@ -70,7 +70,25 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        # prometheus e o endpoint que o servidor de metricas raspa de tempos em
+        # tempos. Exposto aqui porque o ambiente e local; em producao ele fica numa
+        # porta separada da porta de negocio, alcancavel so pela rede interna.
+        include: health,info,metrics,prometheus
   endpoint:
     health:
       show-details: always
+  metrics:
+    distribution:
+      # Sem isto, as metricas de HTTP so tem contagem e soma, e media de latencia
+      # esconde exatamente o que interessa: a minoria de requisicoes lentas. Com
+      # histograma da para perguntar p95 e p99.
+      percentiles-histogram:
+        http.server.requests: true
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+    tags-sorter: alpha

@@ -5,6 +5,7 @@ import org.awaitility.Awaitility;
 import org.awaitility.core.ThrowingRunnable;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -29,9 +30,24 @@ import java.time.Duration;
  * o ApplicationContext entre as classes de teste, e um container que morresse ao
  * fim de cada classe voltaria numa porta nova, deixando o contexto cacheado
  * apontando para o vazio.
+ *
+ * @AutoConfigureObservability liga a exportacao de metricas, que o Spring Boot
+ * desliga por padrao em teste. A razao do padrao e boa: sem isso, toda suite
+ * rodando na maquina de qualquer pessoa publicaria metricas em backends de
+ * monitoramento reais, envenenando painel e alarme com dado de teste. Como aqui o
+ * destino e um registry em memoria e uma das coisas testadas e justamente o
+ * endpoint de metricas, a gente opta por ligar.
+ *
+ * A anotacao fica na classe base, e nao na classe de teste que precisa dela, de
+ * proposito: qualquer anotacao a mais numa subclasse mudaria a chave de cache do
+ * contexto e faria o Spring criar um SEGUNDO ApplicationContext. Com dois
+ * contextos vivos, os dois se conectam a mesma fila do RabbitMQ e passam a
+ * disputar as mensagens uns dos outros, o que transforma testes deterministicos
+ * em testes que falham de vez em quando.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
+@AutoConfigureObservability
 public abstract class IntegrationTestSupport {
 
     private static final Duration ESPERA_MAXIMA = Duration.ofSeconds(20);

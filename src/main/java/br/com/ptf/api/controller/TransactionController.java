@@ -1,8 +1,16 @@
 package br.com.ptf.api.controller;
 
+import br.com.ptf.api.dto.ApiError;
 import br.com.ptf.api.dto.CreateTransactionRequest;
 import br.com.ptf.api.dto.TransactionResponse;
 import br.com.ptf.api.service.TransactionService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,8 +25,13 @@ import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 import java.net.URI;
 import java.util.UUID;
 
+/**
+ * Transacao e recurso de primeira classe, em /transactions, e nao um sub-recurso
+ * de conta. A conta e um campo do lancamento, nao o dono dele.
+ */
 @RestController
 @RequestMapping("/transactions")
+@Tag(name = "Transacoes", description = "Lancamentos financeiros: criacao assincrona e consulta de status")
 public class TransactionController {
 
     private static final String IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
@@ -30,20 +43,32 @@ public class TransactionController {
         this.transactionService = transactionService;
     }
 
-    /**
-     * Agora devolve 202 Accepted, nao mais 201 Created.
-     *
-     * A diferenca nao e cosmetica. 201 significa "o recurso existe e esta pronto";
-     * 202 significa "aceitei o pedido, o resultado vem depois". Devolver 201 num
-     * fluxo assincrono e mentir para o cliente: ele consultaria o saldo logo em
-     * seguida, veria o valor antigo e concluiria que a API perdeu a operacao.
-     *
-     * O header Location continua, e agora tem uma funcao a mais: e o endereco para
-     * o cliente acompanhar o status ate sair de PENDING.
-     */
     @PostMapping
+    @Operation(
+            summary = "Registra um lancamento",
+            description = """
+                    Responde 202 Accepted, e nao 201: o lancamento e gravado com status PENDING
+                    e o saldo so muda quando o consumidor processa a mensagem. Consulte
+                    GET /transactions/{id} para acompanhar ate PROCESSED ou FAILED.
+
+                    Com o header Idempotency-Key, reenviar a mesma requisicao devolve o
+                    lancamento original com 200 e o header Idempotent-Replay, em vez de criar
+                    um segundo. A mesma chave com payload diferente e recusada com 409.
+                    """)
+    @ApiResponses({
+            @ApiResponse(responseCode = "202", description = "Lancamento aceito e aguardando processamento"),
+            @ApiResponse(responseCode = "200", description = "Replay: a chave ja tinha sido usada com este mesmo payload"),
+            @ApiResponse(responseCode = "400", description = "Payload invalido",
+                    content = @Content(schema = @Schema(implementation = ApiError.class))),
+            @ApiResponse(responseCode = "404", description = "Conta inexistente",
+                    content = @Content(schema = @Schema(implementation = ApiError.class))),
+            @ApiResponse(responseCode = "409", description = "Chave de idempotencia reutilizada com outro payload",
+                    content = @Content(schema = @Schema(implementation = ApiError.class)))
+    })
     public ResponseEntity<TransactionResponse> create(
-            @RequestHeader(value = IDEMPOTENCY_KEY_HEADER, required = false) String idempotencyKey,
+            @RequestHeader(value = IDEMPOTENCY_KEY_HEADER, required = false)
+            @Parameter(description = "Identificador da tentativa, escolhido pelo cliente. Recomendado em toda requisicao.")
+            String idempotencyKey,
             @Valid @RequestBody CreateTransactionRequest request) {
 
         TransactionService.Result result = transactionService.create(idempotencyKey, request);
@@ -64,6 +89,14 @@ public class TransactionController {
     }
 
     @GetMapping("/{id}")
+    @Operation(
+            summary = "Consulta um lancamento",
+            description = "Use para acompanhar o status. Em FAILED, o campo failureReason explica o motivo.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Lancamento encontrado"),
+            @ApiResponse(responseCode = "404", description = "Lancamento inexistente",
+                    content = @Content(schema = @Schema(implementation = ApiError.class)))
+    })
     public TransactionResponse findById(@PathVariable UUID id) {
         return TransactionResponse.from(transactionService.findById(id));
     }

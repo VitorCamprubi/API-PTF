@@ -12,6 +12,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.List;
 
@@ -80,6 +81,23 @@ public class GlobalExceptionHandler {
                                                        HttpServletRequest request) {
         String message = "valor invalido para o parametro '%s': %s".formatted(ex.getName(), ex.getValue());
         return build(HttpStatus.BAD_REQUEST, message, request);
+    }
+
+    /**
+     * URL que nao corresponde a nenhum endpoint.
+     *
+     * Sem este handler, a excecao cai no tratador generico de Exception e a API
+     * responde 500 para qualquer rota digitada errada. Alem de mentir para o
+     * cliente, isso polui o monitoramento com erro de servidor que nao existe, e
+     * alarme falso e o caminho mais curto para todo mundo parar de olhar alarme.
+     *
+     * Descoberto por um teste de observabilidade, que e onde erro de observabilidade
+     * costuma aparecer: em lugar nenhum, ate alguem procurar.
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiError> handleNoResource(NoResourceFoundException ex,
+                                                     HttpServletRequest request) {
+        return build(HttpStatus.NOT_FOUND, "recurso nao encontrado", request);
     }
 
     /**

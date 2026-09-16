@@ -10,6 +10,7 @@ import br.com.ptf.api.exception.IdempotencyConflictException;
 import br.com.ptf.api.exception.TransactionNotFoundException;
 import br.com.ptf.api.config.RabbitConfig;
 import br.com.ptf.api.messaging.TransactionMessage;
+import br.com.ptf.api.metrics.TransactionMetrics;
 import br.com.ptf.api.repository.AccountRepository;
 import br.com.ptf.api.repository.AdvisoryLockRepository;
 import br.com.ptf.api.repository.IdempotencyRecordRepository;
@@ -46,19 +47,22 @@ public class TransactionService {
     private final AdvisoryLockRepository advisoryLockRepository;
     private final AuditService auditService;
     private final OutboxService outboxService;
+    private final TransactionMetrics metrics;
 
     public TransactionService(TransactionRepository transactionRepository,
                               AccountRepository accountRepository,
                               IdempotencyRecordRepository idempotencyRecordRepository,
                               AdvisoryLockRepository advisoryLockRepository,
                               AuditService auditService,
-                              OutboxService outboxService) {
+                              OutboxService outboxService,
+                              TransactionMetrics metrics) {
         this.transactionRepository = transactionRepository;
         this.accountRepository = accountRepository;
         this.idempotencyRecordRepository = idempotencyRecordRepository;
         this.advisoryLockRepository = advisoryLockRepository;
         this.auditService = auditService;
         this.outboxService = outboxService;
+        this.metrics = metrics;
     }
 
     @Transactional
@@ -150,6 +154,8 @@ public class TransactionService {
                 salva.getId().toString(),
                 RabbitConfig.ROUTING_KEY,
                 new TransactionMessage(salva.getId()));
+
+        metrics.contarCriada(salva.getType());
 
         return salva;
     }
