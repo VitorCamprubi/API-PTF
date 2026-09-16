@@ -7,6 +7,8 @@ services:
       POSTGRES_USER: ptf
       POSTGRES_PASSWORD: ptf
     ports:
+      # 5433 no host porque a 5432 costuma estar ocupada por um Postgres nativo.
+      # Dentro da rede do compose os servicos conversam pela porta interna, 5432.
       - "5433:5432"
     volumes:
       - ptf-postgres-data:/var/lib/postgresql/data
@@ -30,6 +32,31 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+
+  # Sobe apenas com --profile full. O fluxo de desenvolvimento continua sendo
+  # infra em container e aplicacao na IDE; este servico existe para quem clonou o
+  # repositorio e quer ver o sistema rodando com um comando so.
+  api:
+    build: .
+    container_name: api-ptf-app
+    profiles: ["full"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      # Nomes de servico, nao localhost: dentro da rede do compose cada container
+      # tem o proprio localhost, e "postgres" resolve para o container do banco.
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/ptf
+      SPRING_DATASOURCE_USERNAME: ptf
+      SPRING_DATASOURCE_PASSWORD: ptf
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ptf
+      SPRING_RABBITMQ_PASSWORD: ptf
+    ports:
+      - "8081:8081"
 
 volumes:
   ptf-postgres-data:
